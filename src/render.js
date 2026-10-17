@@ -1,4 +1,4 @@
-import { visiblePoints, handles } from './curve.js?v=4';
+import { visiblePoints, handles } from './curve.js?v=5';
 
 // Draw the tracer up to `progress` (0..1 of the hang time) with a soft glow and a bright core.
 export function drawTrace(ctx, trace, progress, style) {
@@ -71,6 +71,32 @@ export function drawTrackedPoints(ctx, points, scale) {
     ctx.fill();
   }
   ctx.restore();
+}
+
+// Carry estimate in the top-left corner (it is part of the exported video).
+export function drawCarryLabel(ctx, stats, scale) {
+  const text = `Carry ≈ ${Math.round(stats.carryYd)} yd`;
+  const pad = 10 * scale, size = 28 * scale, x = 16 * scale, y = 16 * scale;
+  ctx.save();
+  ctx.font = `600 ${size}px -apple-system, "Segoe UI", sans-serif`;
+  const tw = ctx.measureText(text).width;
+  ctx.fillStyle = 'rgba(0,0,0,0.45)';
+  roundRect(ctx, x, y, tw + pad * 2, size + pad * 1.4, 8 * scale);
+  ctx.fill();
+  ctx.fillStyle = '#fff';
+  ctx.textBaseline = 'top';
+  ctx.fillText(text, x + pad, y + pad * 0.7);
+  ctx.restore();
+}
+
+function roundRect(ctx, x, y, w, h, r) {
+  ctx.beginPath();
+  ctx.moveTo(x + r, y);
+  ctx.arcTo(x + w, y, x + w, y + h, r);
+  ctx.arcTo(x + w, y + h, x, y + h, r);
+  ctx.arcTo(x, y + h, x, y, r);
+  ctx.arcTo(x, y, x + w, y, r);
+  ctx.closePath();
 }
 
 export function drawBallMarker(ctx, ball, scale) {

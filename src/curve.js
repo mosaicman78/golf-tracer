@@ -128,6 +128,105 @@ function trackedPolyline(start, points, impactIndex, w, h) {
   return { pts, hangFrames: total };
 }
 
+// Smooth curve through the tracked points: x(t) and y(t) are each fitted with the shape a
+// projectile has on screen, (a + b t + c t^2) / (1 + k t), pinned to the tee at t = 0. The
+// denominator's k is picked by a grid search, the numerators by linear least squares.
+// Returns { xy(t), tEnd } or null when there are too few points.
+export function fitSmooth(start, obs) {
+  if (obs.length < 5) return null;
+  const weights = obs.map((o, i) => (i < 2 && obs.length > 10 ? 0.3 : 1));
+  let best = null;
+  const tryK = (e) => {
+    const k = Math.exp(e);
+    const fit = (key) => {
+      // (y(1+kt) - y0) = b t + c t^2, weighted LS in (b, c)
+      let s11 = 0, s12 = 0, s22 = 0, r1 = 0, r2 = 0;
+      obs.forEach((o, i) => {
+        const t = o.t, wgt = weights[i];
+        const target = o[key] * (1 + k * t) - start[key];
+        s11 += wgt * t * t; s12 += wgt * t * t * t; s22 += wgt * t * t * t * t;
+        r1 += wgt * t * target; r2 += wgt * t * t * target;
+      });
+      const det = s11 * s22 - s12 * s12;
+      if (Math.abs(det) < 1e-12) return null;
+      const b = (s22 * r1 - s12 * r2) / det, c = (s11 * r2 - s12 * r1) / det;
+      let sse = 0;
+      obs.forEach((o, i) => {
+        const v = (start[key] + b * o.t + c * o.t * o.t) / (1 + k * o.t);
+        sse += weights[i] * (v - o[key]) ** 2;
+      });
+      return { b, c, sse };
+    };
+    const fx = fit('x'), fy = fit('y');
+    if (!fx || !fy) return;
+    const sse = fx.sse + fy.sse;
+    if (!best || sse < best.sse) best = { e, k, fx, fy, sse };
+  };
+  for (let e = -1.6; e <= 3.4; e += 0.2) tryK(e);
+  if (!best) return null;
+  const centre = best.e;
+  for (let e = centre - 0.2; e <= centre + 0.2; e += 0.02) tryK(e);
+  const { k, fx, fy } = best;
+  const tEnd = obs[obs.length - 1].t;
+  return {
+    tEnd,
+    rms: Math.sqrt(best.sse / obs.length),
+    xy: (t) => ({
+      x: (start.x + fx.b * t + fx.c * t * t) / (1 + k * t),
+      y: (start.y + fy.b * t + fy.c * t * t) / (1 + k * t),
+    }),
+  };
+}
+
+// The final trace: the smooth fit over the tracked part of the flight, continued to landing
+// along the physics model (shifted so it joins seamlessly). `flight` is the result of
+// fitFlight plus `polylineAt(t)` giving the model's screen point at time t since impact;
+// it may be null, in which case the smooth curve is simply run on a little further.
+// Returns { pts, hangFrames }.
+export function smoothTrace(start, points, impactIndex, fps, w, h, flight) {
+  const obs = points.map((p) => ({ x: p.x, y: p.y, t: (p.i - impactIndex) / fps }));
+  const sm = fitSmooth(start, obs);
+  if (!sm) return null;
+  const clamp = (p) => ({ x: Math.min(w - 4, Math.max(4, p.x)), y: Math.min(h - 4, Math.max(4, p.y)) });
+  const tEnd = sm.tEnd;
+  let tTotal;
+  const samples = [];
+  const n1 = 60;
+  for (let i = 0; i <= n1; i++) {
+    const t = (i / n1) * tEnd;
+    samples.push({ ...sm.xy(t), t });
+  }
+  if (flight && flight.tLand - flight.t0 > tEnd + 0.15) {
+    // Height follows the model's descent from where the smooth curve ends; sideways motion
+    // carries on from the smooth curve's last drift and dies away, since the model's
+    // lateral extrapolation is the least reliable thing about it.
+    tTotal = flight.tLand - flight.t0;
+    const end = sm.xy(tEnd);
+    const before = sm.xy(Math.max(0, tEnd - 0.3));
+    const vxEnd = (end.x - before.x) / Math.max(0.05, tEnd - Math.max(0, tEnd - 0.3));
+    const yModelEnd = flight.at(tEnd).y;
+    const n2 = 60;
+    for (let i = 1; i <= n2; i++) {
+      const t = tEnd + (i / n2) * (tTotal - tEnd);
+      const tau = t - tEnd;
+      samples.push({
+        x: end.x + (vxEnd * tau) / (1 + tau / 1.5),
+        y: end.y + (flight.at(t).y - yModelEnd),
+        t,
+      });
+    }
+  } else {
+    tTotal = tEnd * 1.25;
+    const n2 = 15;
+    for (let i = 1; i <= n2; i++) {
+      const t = tEnd + (i / n2) * (tTotal - tEnd);
+      samples.push({ ...sm.xy(t), t });
+    }
+  }
+  const pts = samples.map((p) => ({ ...clamp(p), s: p.t / tTotal }));
+  return { pts, hangFrames: tTotal * fps, rms: sm.rms };
+}
+
 // Build the default trace from the launch point and tracked points.
 // Returns { pts, hangFrames } (hangFrames = 0 when nothing was tracked).
 export function defaultTrace(start, points, impactIndex, w, h) {

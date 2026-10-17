@@ -1,7 +1,8 @@
-import { toGray, analyze, snapToBall, estimateBallRadius } from './tracker.js?v=4';
-import { defaultTrace, handles, moveHandle } from './curve.js?v=4';
-import { drawTrace, drawHandles, drawTrackedPoints, drawBallMarker } from './render.js?v=4';
-import { recordClip, seek } from './export.js?v=4';
+import { toGray, analyze, snapToBall, estimateBallRadius } from './tracker.js?v=5';
+import { defaultTrace, smoothTrace, handles, moveHandle } from './curve.js?v=5';
+import { fitFlight, flightAt } from './flight.js?v=5';
+import { drawTrace, drawHandles, drawTrackedPoints, drawBallMarker, drawCarryLabel } from './render.js?v=5';
+import { recordClip, seek } from './export.js?v=5';
 
 const $ = (id) => document.getElementById(id);
 const video = $('video');
@@ -216,7 +217,26 @@ async function startAnalysis() {
       ? `Tracked ${state.points.length} frames after impact. Drag the handles to fine-tune.`
       : 'Found impact but lost the ball quickly. Drag the handles to match the shot.';
   }
-  const t = defaultTrace(state.ball, state.points, result.impactIndex, canvas.width, canvas.height);
+  // Fit the flight model and build a smooth curve that runs on to landing; fall back to
+  // the plain polyline when there is too little to fit.
+  state.stats = null;
+  let t = null;
+  if (result.impactIndex >= 0 && state.points.length >= 6) {
+    $('analyze-msg').textContent = 'Fitting the ball flight…';
+    await new Promise((r) => setTimeout(r, 20));
+    const obs = state.points.map((p) => ({ x: p.x, y: p.y, t: (p.i - result.impactIndex) / FPS }));
+    let flight = null;
+    try {
+      const fit = fitFlight(canvas.width, canvas.height, state.ball, obs, { fps: FPS });
+      if (fit) {
+        flight = { ...fit, at: flightAt(fit) };
+        state.stats = { carryYd: fit.carry * 1.0936, hang: fit.tLand, speedMph: fit.speed * 2.237, launch: fit.launchAngle };
+      }
+    } catch (err) { console.warn('flight fit failed', err); }
+    t = smoothTrace(state.ball, state.points, result.impactIndex, FPS, canvas.width, canvas.height, flight);
+    if (t && state.stats) $('adjust-msg').textContent += ` Carry estimate ≈ ${Math.round(state.stats.carryYd)} yd (rough: single phone camera, no calibration).`;
+  }
+  if (!t) t = defaultTrace(state.ball, state.points, result.impactIndex, canvas.width, canvas.height);
   state.trace = t.pts;
   if (t.hangFrames > 0) {
     state.hang = Math.min(9, Math.max(1.5, t.hangFrames / FPS));
@@ -318,6 +338,7 @@ function draw(clean = false) {
   if (state.trace && state.impactTime != null) {
     const progress = Math.min(1, Math.max(0, (video.currentTime - state.impactTime) / state.hang));
     drawTrace(ctx, state.trace, progress, state.style);
+    if (state.stats && progress > 0) drawCarryLabel(ctx, state.stats, scale);
     if (!clean && state.step === 'adjust' && !state.previewing) {
       drawTrackedPoints(ctx, state.points, scale);
       drawHandles(ctx, state.trace, scale);

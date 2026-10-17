@@ -87,3 +87,54 @@ test('handles warp the polyline smoothly', () => {
   const mid = positionAt(pts, 0.525);
   assert.ok(mid.x > pts[10].x && mid.x < pts[11].x);
 });
+
+import { fitFlight, simulate, project, cameraWithPitch, flightAt } from '../src/flight.js';
+import { fitSmooth, smoothTrace } from '../src/curve.js';
+
+test('fitFlight recovers a synthetic flight', () => {
+  const w = 1080, h = 1920, fps = 30;
+  const pitch = (5 * Math.PI) / 180;
+  const cam = cameraWithPitch(w, h, pitch);
+  const tee = { x: 0.2, y: 0, z: 3 };
+  const v = { vx: -1, vy: 14, vz: 55, ax: 0 };
+  const sim = simulate(tee, v);
+  const teePx = project(cam, tee);
+  const ball = { x: teePx.x, y: teePx.y, r: 8 };
+  const t0 = 0.4 / fps;
+  const obs = [];
+  for (let i = 1; i <= 70; i++) {
+    const t = i / fps;
+    const k = Math.round((t + t0) / 0.01);
+    const p = project(cam, sim.pts[Math.min(k, sim.pts.length - 1)]);
+    obs.push({ x: p.x + (i % 3 - 1) * 0.5, y: p.y + (i % 2) * 0.5, t });
+  }
+  const fit = fitFlight(w, h, ball, obs, { fps });
+  assert.ok(fit, 'fit found');
+  const trueSpeed = Math.hypot(v.vx, v.vy, v.vz);
+  assert.ok(Math.abs(fit.speed - trueSpeed) / trueSpeed < 0.08, `speed ${fit.speed} vs ${trueSpeed}`);
+  const land = sim.pts[sim.pts.length - 1];
+  const trueCarry = Math.hypot(land.x - tee.x, land.z - tee.z);
+  assert.ok(Math.abs(fit.carry - trueCarry) / trueCarry < 0.1, `carry ${fit.carry} vs ${trueCarry}`);
+  assert.ok(fit.rms < 3, `rms ${fit.rms}`);
+  const at = flightAt(fit);
+  assert.ok(Number.isFinite(at(1).x));
+});
+
+test('fitSmooth and smoothTrace follow the tracked points and run on to landing', () => {
+  const start = { x: 500, y: 1200 };
+  const obs = [];
+  for (let i = 1; i <= 60; i++) {
+    const t = i / 30;
+    obs.push({ x: (500 + 40 * t) / (1 + 2 * t), y: (1200 - 1800 * t + 500 * t * t) / (1 + 2 * t), t });
+  }
+  const sm = fitSmooth(start, obs);
+  assert.ok(sm.rms < 1, `rms ${sm.rms}`);
+  const points = obs.map((o, k) => ({ x: o.x, y: o.y, i: 10 + k + 1 }));
+  const flight = { tLand: 5, t0: 0, at: (t) => ({ x: 400, y: 300 + 60 * t * t }) };
+  const tr = smoothTrace(start, points, 10, 30, 1080, 1920, flight);
+  assert.equal(tr.pts[0].s, 0);
+  assert.equal(tr.pts[tr.pts.length - 1].s, 1);
+  assert.ok(Math.abs(tr.hangFrames - 150) < 1);
+  const last = tr.pts[tr.pts.length - 1];
+  assert.ok(last.y > obs[obs.length - 1].y, 'continues downward after the tracked part');
+});
