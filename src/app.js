@@ -1,8 +1,8 @@
-import { toGray, analyze, snapToBall, estimateBallRadius } from './tracker.js?v=7';
-import { defaultTrace, smoothTrace, handles, moveHandle } from './curve.js?v=7';
-import { fitFlight, flightAt } from './flight.js?v=7';
-import { drawTrace, drawHandles, drawTrackedPoints, drawBallMarker, drawCarryLabel } from './render.js?v=7';
-import { recordClip, seek } from './export.js?v=7';
+import { toGray, analyze, snapToBall, estimateBallRadius } from './tracker.js?v=8';
+import { defaultTrace, smoothTrace, handles, moveHandle } from './curve.js?v=8';
+import { fitFlight, flightAt } from './flight.js?v=8';
+import { drawTrace, drawHandles, drawTrackedPoints, drawBallMarker, drawCarryLabel } from './render.js?v=8';
+import { recordClip, seek } from './export.js?v=8';
 
 const $ = (id) => document.getElementById(id);
 const video = $('video');
@@ -167,6 +167,17 @@ canvas.addEventListener('pointermove', (ev) => {
   state.drag.last = p;
   draw();
 });
+// The page scrolls over the video (touch-action: pan-y) except when a finger lands on a handle,
+// where the touch is kept for dragging.
+function nearHandle(touch) {
+  if (state.step !== 'adjust' || !state.trace || state.previewing) return false;
+  const p = toVideoCoords(touch);
+  const hitR = 28 * cssScale();
+  const h = handles(state.trace);
+  return ['apex', 'landing', 'start'].some((k) => Math.hypot(h[k].x - p.x, h[k].y - p.y) < hitR);
+}
+canvas.addEventListener('touchstart', (ev) => { if (ev.touches.length === 1 && nearHandle(ev.touches[0])) ev.preventDefault(); }, { passive: false });
+canvas.addEventListener('touchmove', (ev) => { if (state.drag) ev.preventDefault(); }, { passive: false });
 const endDrag = () => { state.drag = null; };
 canvas.addEventListener('pointerup', endDrag);
 canvas.addEventListener('pointercancel', endDrag);

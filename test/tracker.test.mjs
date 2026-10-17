@@ -89,7 +89,7 @@ test('handles warp the polyline smoothly', () => {
 });
 
 import { fitFlight, simulate, project, cameraWithPitch, flightAt } from '../src/flight.js';
-import { fitSmooth, smoothTrace } from '../src/curve.js';
+import { fitSmooth, smoothTrace, landingY } from '../src/curve.js';
 
 test('fitFlight recovers a synthetic flight', () => {
   const w = 1080, h = 1920, fps = 30;
@@ -134,7 +134,10 @@ test('fitSmooth and smoothTrace follow the tracked points and run on to landing'
   const tr = smoothTrace(start, points, 10, 30, 1080, 1920, flight);
   assert.equal(tr.pts[0].s, 0);
   assert.equal(tr.pts[tr.pts.length - 1].s, 1);
-  assert.ok(Math.abs(tr.hangFrames - 150) < 1);
+  assert.ok(tr.hangFrames > 60 && tr.hangFrames <= 150.5, `hang ${tr.hangFrames}`);
   const last = tr.pts[tr.pts.length - 1];
   assert.ok(last.y > obs[obs.length - 1].y, 'continues downward after the tracked part');
+  // ...but stops at the ground, which sits between the tee and the horizon
+  assert.ok(Math.abs(last.y - landingY(start, 1080, 1920, flight)) < 1, `lands at ${last.y}`);
+  assert.ok(last.y < start.y, 'landing is up the screen from the tee');
 });

@@ -56,7 +56,7 @@ main { flex: 1; display: flex; flex-direction: column; gap: 12px; padding: 8px 1
   background: #000;
   border-radius: 10px;
   overflow: hidden;
-  touch-action: none;
+  touch-action: pan-y;
 }
 .stage canvas { display: block; width: 100%; height: auto; }
 .stage video { position: absolute; width: 1px; height: 1px; opacity: 0; pointer-events: none; }

@@ -1,3 +1,4 @@
+import { focalPx } from './flight.js?v=8';
 // The tracer is a polyline of { x, y, s } where s in [0, 1] is the fraction of the hang time
 // at which the ball is at that point. When the ball was tracked, s comes from the real frame
 // times, so the drawn line keeps pace with the ball in the video. The user edits it with three
@@ -189,6 +190,10 @@ export function smoothTrace(start, points, impactIndex, fps, w, h, flight) {
   if (!sm) return null;
   const clamp = (p) => ({ x: Math.min(w - 4, Math.max(4, p.x)), y: Math.min(h - 4, Math.max(4, p.y)) });
   const tEnd = sm.tEnd;
+  // The ball lands on the ground somewhere down-range, which on screen is between the tee and
+  // the horizon. The flight model's own landing projection is the best guess; failing that,
+  // the ball's apparent size gives the tee distance and so where the horizon roughly sits.
+  const groundY = landingY(start, w, h, flight);
   let tTotal;
   const samples = [];
   const n1 = 60;
@@ -196,22 +201,28 @@ export function smoothTrace(start, points, impactIndex, fps, w, h, flight) {
     const t = (i / n1) * tEnd;
     samples.push({ ...sm.xy(t), t });
   }
-  if (flight && flight.tLand - flight.t0 > tEnd + 0.15) {
-    // Height follows the model's descent from where the smooth curve ends; sideways motion
-    // carries on from the smooth curve's last drift and dies away, since the model's
+  const end = sm.xy(tEnd);
+  if (end.y >= groundY && groundY != null) {
+    // Already down to the ground within the tracked part: cut the curve where it got there.
+    tTotal = tEnd;
+  } else if (flight && flight.tLand - flight.t0 > tEnd + 0.15) {
+    // Height follows the shape of the model's descent, scaled so it ends on the ground; sideways
+    // motion carries on from the smooth curve's last drift and dies away, since the model's
     // lateral extrapolation is the least reliable thing about it.
     tTotal = flight.tLand - flight.t0;
-    const end = sm.xy(tEnd);
     const before = sm.xy(Math.max(0, tEnd - 0.3));
     const vxEnd = (end.x - before.x) / Math.max(0.05, tEnd - Math.max(0, tEnd - 0.3));
     const yModelEnd = flight.at(tEnd).y;
+    const dropModel = flight.at(tTotal).y - yModelEnd;
+    const dropNeeded = groundY - end.y;
+    const g = dropModel > 1 ? Math.min(4, Math.max(0.25, dropNeeded / dropModel)) : 1;
     const n2 = 60;
     for (let i = 1; i <= n2; i++) {
       const t = tEnd + (i / n2) * (tTotal - tEnd);
       const tau = t - tEnd;
       samples.push({
         x: end.x + (vxEnd * tau) / (1 + tau / 1.5),
-        y: end.y + (flight.at(t).y - yModelEnd),
+        y: end.y + (flight.at(t).y - yModelEnd) * g,
         t,
       });
     }
@@ -223,8 +234,38 @@ export function smoothTrace(start, points, impactIndex, fps, w, h, flight) {
       samples.push({ ...sm.xy(t), t });
     }
   }
+  // Never draw past the ground: stop at the first sample that reaches it (after the apex).
+  if (groundY != null) {
+    let apex = 0;
+    for (let k = 1; k < samples.length; k++) if (samples[k].y < samples[apex].y) apex = k;
+    for (let k = apex + 1; k < samples.length; k++) {
+      if (samples[k].y >= groundY) {
+        const a = samples[k - 1], b = samples[k];
+        const f = (groundY - a.y) / Math.max(1e-6, b.y - a.y);
+        samples.length = k;
+        samples.push({ x: a.x + (b.x - a.x) * f, y: groundY, t: a.t + (b.t - a.t) * f });
+        tTotal = samples[samples.length - 1].t;
+        break;
+      }
+    }
+  }
   const pts = samples.map((p) => ({ ...clamp(p), s: p.t / tTotal }));
   return { pts, hangFrames: tTotal * fps, rms: sm.rms };
+}
+
+// Screen y where the ball should land: the flight model's landing projection when there is
+// one, else a point near the horizon implied by the ball's apparent size at the tee.
+export function landingY(start, w, h, flight) {
+  const f = focalPx(w, h);
+  const r = start.r > 0 ? start.r : h / 150;
+  const dist = Math.max(1, (f * 0.021335) / r);            // camera to tee, metres
+  const horizonGap = (f * 1.3) / dist;                      // tee is this far below the horizon
+  const nearHorizon = start.y - horizonGap * 0.85;          // a ~20 m carry already gets here
+  if (flight) {
+    const y = flight.at(flight.tLand - flight.t0).y;
+    if (Number.isFinite(y) && y < start.y - horizonGap * 0.3) return Math.max(y, start.y - horizonGap);
+  }
+  return nearHorizon;
 }
 
 // Build the default trace from the launch point and tracked points.
