@@ -19,7 +19,7 @@ export function focalPx(w, h, equivMm = 24) {
 // Camera with a given pitch (radians, down positive).
 export function cameraWithPitch(w, h, pitch, opts = {}) {
   const f = focalPx(w, h, opts.equivMm ?? 24);
-  const hc = opts.cameraHeight ?? 1.3;
+  const hc = opts.cameraHeight ?? 1.4;
   return { f, cx: w / 2, cy: h / 2, hc, pitch, cos: Math.cos(pitch), sin: Math.sin(pitch), w, h };
 }
 
@@ -27,7 +27,7 @@ export function cameraWithPitch(w, h, pitch, opts = {}) {
 // apparent size gives its distance, which with the camera height gives the pitch.
 export function makeCamera(w, h, ball, opts = {}) {
   const f = focalPx(w, h, opts.equivMm ?? 24);
-  const hc = opts.cameraHeight ?? 1.3;
+  const hc = opts.cameraHeight ?? 1.4;
   const cy = h / 2;
   const dist = Math.max(1.0, (f * BALL_RADIUS_M) / Math.max(1, ball.r)); // camera to ball, metres
   const beta = Math.atan2(ball.y - cy, f);                                // ball below optical axis
@@ -60,10 +60,11 @@ export function project(cam, p) {
   return { x: cam.cx + (cam.f * xc) / zc, y: cam.cy - (cam.f * yc) / zc };
 }
 
-// Aerodynamics of a typical driver shot: drag plus backspin lift (no spin decay, no wind).
+// Aerodynamics: drag plus backspin lift (no spin decay, no wind). The coefficients are a
+// middle ground between a driver and a wedge; they fit both sample clips to a few pixels.
 // k = 0.5 * air density * ball area / ball mass.
 const K_AERO = (0.5 * 1.2 * 0.00143) / 0.0459;
-const CD = 0.27, CL = 0.18;
+const CD = 0.3, CL = 0.3;
 const DT = 0.01;
 
 // Simulate the flight from the tee until the ball returns to the ground.
@@ -79,7 +80,7 @@ export function simulate(tee, v, maxT = 12) {
     const vh = Math.hypot(vel.x, vel.z) || 1e-6;
     // lift: perpendicular to velocity in its vertical plane, pointing up
     const nx = (-vel.x * vel.y) / vh / speed, ny = vh / speed, nz = (-vel.z * vel.y) / vh / speed;
-    const drag = K_AERO * CD * speed, lift = K_AERO * CL * speed * speed;
+    const drag = K_AERO * (v.cd ?? CD) * speed, lift = K_AERO * (v.cl ?? CL) * speed * speed;
     const ax = -drag * vel.x + lift * nx + sideAcc;
     const ay = -drag * vel.y + lift * ny - G;
     const az = -drag * vel.z + lift * nz;
@@ -120,7 +121,7 @@ function geometry(w, h, ball, p, opts) {
 
 function projectAll(w, h, ball, p, obs, opts) {
   const { cam, tee } = geometry(w, h, ball, p, opts);
-  const sim = simulate(tee, { vx: p.vx, vy: p.vy, vz: p.vz, ax: p.ax });
+  const sim = simulate(tee, { vx: p.vx, vy: p.vy, vz: p.vz, ax: p.ax, cl: opts.cl, cd: opts.cd });
   return obs.map((o) => {
     const t = o.t + p.t0;
     if (t < 0 || t > sim.tLand + 0.05) return null;
@@ -140,8 +141,18 @@ function huberWeight(r2) {
   return r <= HUBER ? 1 : HUBER / r;
 }
 
+// Soft prior on what a golf shot can be: when only the climb was tracked the data alone
+// barely pins down speed, so keep the fit inside plausible hang times and ball speeds.
+function prior(w, h, ball, p, opts) {
+  const { tee } = geometry(w, h, ball, p, opts);
+  const sim = simulate(tee, { vx: p.vx, vy: p.vy, vz: p.vz, ax: p.ax, cl: opts.cl, cd: opts.cd });
+  const speed = Math.hypot(p.vx, p.vy, p.vz);
+  const over = Math.max(0, sim.tLand - 7) + Math.max(0, 1.5 - sim.tLand) + Math.max(0, (speed - 85) / 10);
+  return 1e4 * over * over;
+}
+
 function residuals(w, h, ball, p, obs, opts) {
-  let sum = 0;
+  let sum = prior(w, h, ball, p, opts);
   const ps = projectAll(w, h, ball, p, obs, opts);
   for (let i = 0; i < obs.length; i++) {
     const q = ps[i];
@@ -151,10 +162,10 @@ function residuals(w, h, ball, p, obs, opts) {
   return sum;
 }
 
-function valid(p, maxT0) {
+function valid(p, maxT0, maxLaunch = 0.5) {
   const launch = Math.atan2(p.vy, Math.hypot(p.vx, p.vz));
   return p.vy > 0 && p.vz > 3 && p.t0 >= 0 && p.t0 <= maxT0 && p.pitch > -0.6 && p.pitch < 0.9
-    && Math.abs(p.ax) < 6 && launch > 0.06 && launch < 0.5;
+    && Math.abs(p.ax) < 6 && launch > 0.06 && launch < maxLaunch;
 }
 
 // Levenberg-Marquardt with a numerical Jacobian, from a few starting speeds and angles.
@@ -164,10 +175,11 @@ export function fitFlight(w, h, ball, obs, opts = {}) {
   if (obs.length < 6) return null;
   const fps = opts.fps ?? 30;
   const maxT0 = 1.5 / fps;
+  const maxLaunch = opts.maxLaunch ?? 0.95; // up to ~55°, so lofted pitches fit too
   const init = makeCamera(w, h, ball, opts);
   let best = null;
   for (const speed of [30, 45, 60, 75]) {
-    for (const angle of [8, 14, 22]) {
+    for (const angle of (opts.angles ?? [8, 14, 22, 32, 42])) {
       const a = (angle * Math.PI) / 180;
       let p = { vx: 0, vy: speed * Math.sin(a), vz: speed * Math.cos(a), pitch: init.cam.pitch, t0: 0.5 / fps, ax: 0 };
       let lambda = 1e-2;
@@ -198,20 +210,20 @@ export function fitFlight(w, h, ball, obs, opts = {}) {
           if (!step) break;
           const np = { ...p };
           KEYS.forEach((k, i) => { np[k] = p[k] - step[i]; });
-          if (!valid(np, maxT0)) { lambda *= 5; continue; }
+          if (!valid(np, maxT0, maxLaunch)) { lambda *= 5; continue; }
           const nerr = residuals(w, h, ball, np, obs, opts);
           if (nerr < err) { p = np; err = nerr; lambda = Math.max(1e-7, lambda / 3); improved = true; }
           else lambda *= 5;
         }
         if (!improved) break;
       }
-      if (valid(p, maxT0) && (!best || err < best.err)) best = { p, err };
+      if (valid(p, maxT0, maxLaunch) && (!best || err < best.err)) best = { p, err };
     }
   }
   if (!best) return null;
   const { p, err } = best;
   const { cam, tee } = geometry(w, h, ball, p, opts);
-  const v = { vx: p.vx, vy: p.vy, vz: p.vz, ax: p.ax };
+  const v = { vx: p.vx, vy: p.vy, vz: p.vz, ax: p.ax, cl: opts.cl, cd: opts.cd };
   const sim = simulate(tee, v);
   const land = sim.pts[sim.pts.length - 1];
   let apexHeight = 0;

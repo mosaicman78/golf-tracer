@@ -1,8 +1,8 @@
-import { toGray, analyze, snapToBall, estimateBallRadius } from './tracker.js?v=8';
-import { defaultTrace, smoothTrace, handles, moveHandle } from './curve.js?v=8';
-import { fitFlight, flightAt } from './flight.js?v=8';
-import { drawTrace, drawHandles, drawTrackedPoints, drawBallMarker, drawCarryLabel } from './render.js?v=8';
-import { recordClip, seek } from './export.js?v=8';
+import { toGray, analyze, snapToBall, estimateBallRadius } from './tracker.js?v=9';
+import { defaultTrace, smoothTrace, handles, moveHandle } from './curve.js?v=9';
+import { fitFlight, flightAt } from './flight.js?v=9';
+import { drawTrace, drawHandles, drawTrackedPoints, drawBallMarker, drawCarryLabel } from './render.js?v=9';
+import { recordClip, seek } from './export.js?v=9';
 
 const $ = (id) => document.getElementById(id);
 const video = $('video');

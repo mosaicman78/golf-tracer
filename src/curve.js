@@ -1,4 +1,4 @@
-import { focalPx } from './flight.js?v=8';
+import { focalPx } from './flight.js?v=9';
 // The tracer is a polyline of { x, y, s } where s in [0, 1] is the fraction of the hang time
 // at which the ball is at that point. When the ball was tracked, s comes from the real frame
 // times, so the drawn line keeps pace with the ball in the video. The user edits it with three
@@ -259,7 +259,7 @@ export function landingY(start, w, h, flight) {
   const f = focalPx(w, h);
   const r = start.r > 0 ? start.r : h / 150;
   const dist = Math.max(1, (f * 0.021335) / r);            // camera to tee, metres
-  const horizonGap = (f * 1.3) / dist;                      // tee is this far below the horizon
+  const horizonGap = (f * 1.4) / dist;                      // tee is this far below the horizon
   const nearHorizon = start.y - horizonGap * 0.85;          // a ~20 m carry already gets here
   if (flight) {
     const y = flight.at(flight.tLand - flight.t0).y;
