@@ -1,0 +1,12 @@
+{
+  "name": "golf-tracer",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Trace a golf ball's flight on a clip filmed with your phone. Static web app, no build step.",
+  "scripts": {
+    "start": "python3 -m http.server 8080",
+    "test": "node --test test/*.test.mjs",
+    "test:e2e": "node test/e2e.mjs"
+  }
+}

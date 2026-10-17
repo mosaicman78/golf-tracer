@@ -1,0 +1,85 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <meta name="theme-color" content="#0b1a0f" />
+  <title>Golf Tracer</title>
+  <link rel="manifest" href="manifest.webmanifest" />
+  <link rel="stylesheet" href="src/styles.css" />
+</head>
+<body>
+  <header>
+    <h1>Golf Tracer</h1>
+    <ol id="steps" class="steps">
+      <li data-step="load">Clip</li>
+      <li data-step="tap">Ball</li>
+      <li data-step="analyze">Track</li>
+      <li data-step="adjust">Adjust</li>
+      <li data-step="export">Share</li>
+    </ol>
+  </header>
+
+  <main>
+    <section id="stage" class="stage hidden">
+      <canvas id="canvas"></canvas>
+      <video id="video" playsinline muted preload="auto"></video>
+      <div id="overlay-msg" class="overlay-msg hidden"></div>
+    </section>
+
+    <section id="panel-load" class="panel">
+      <p>Film the swing from behind the golfer, down the target line, with the phone on a tripod. Keep the ball in the lower third of the frame with sky behind the flight.</p>
+      <label class="button primary" for="file">Choose a clip</label>
+      <input id="file" type="file" accept="video/*" hidden />
+      <p class="hint">Slo-mo clips from the Camera app work best.</p>
+    </section>
+
+    <section id="panel-tap" class="panel hidden">
+      <p>Scrub to a frame just before the swing starts, then <strong>tap the ball</strong>.</p>
+      <div class="scrub">
+        <button id="back" class="button small" aria-label="Back one frame">&#9664;</button>
+        <input id="scrubber" type="range" min="0" max="1" step="0.001" value="0" />
+        <button id="fwd" class="button small" aria-label="Forward one frame">&#9654;</button>
+      </div>
+      <p class="hint" id="time-label">0.00 s</p>
+    </section>
+
+    <section id="panel-analyze" class="panel hidden">
+      <p id="analyze-msg">Finding impact and tracking the launch…</p>
+      <progress id="analyze-progress" max="1" value="0"></progress>
+    </section>
+
+    <section id="panel-adjust" class="panel hidden">
+      <p id="adjust-msg">Drag the handles to match the shot: start, apex and landing.</p>
+      <div class="controls">
+        <label>Color <input id="color" type="color" value="#ff3b30" /></label>
+        <label>Width <input id="width" type="range" min="2" max="14" step="1" value="6" /></label>
+        <label>Hang time <input id="hang" type="range" min="1.5" max="9" step="0.1" value="5" /> <span id="hang-label">5.0 s</span></label>
+      </div>
+      <div class="row">
+        <button id="play" class="button">Preview</button>
+        <button id="retap" class="button ghost">Re-tap ball</button>
+        <button id="export" class="button primary">Export video</button>
+      </div>
+    </section>
+
+    <section id="panel-export" class="panel hidden">
+      <p id="export-msg">Rendering…</p>
+      <progress id="export-progress" max="1" value="0"></progress>
+      <div class="row">
+        <a id="download" class="button hidden" download="golf-tracer.mp4">Save video</a>
+        <button id="share" class="button primary hidden">Share</button>
+        <button id="back-to-adjust" class="button ghost">Back</button>
+      </div>
+    </section>
+  </main>
+
+  <footer>
+    <button id="restart" class="link hidden">Start over</button>
+  </footer>
+
+  <script type="module" src="src/app.js"></script>
+</body>
+</html>
