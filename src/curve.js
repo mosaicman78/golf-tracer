@@ -1,4 +1,4 @@
-import { focalPx } from './flight.js?v=9';
+import { focalPx } from './flight.js?v=10';
 // The tracer is a polyline of { x, y, s } where s in [0, 1] is the fraction of the hang time
 // at which the ball is at that point. When the ball was tracked, s comes from the real frame
 // times, so the drawn line keeps pace with the ball in the video. The user edits it with three

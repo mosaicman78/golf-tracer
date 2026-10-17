@@ -148,7 +148,13 @@ function prior(w, h, ball, p, opts) {
   const sim = simulate(tee, { vx: p.vx, vy: p.vy, vz: p.vz, ax: p.ax, cl: opts.cl, cd: opts.cd });
   const speed = Math.hypot(p.vx, p.vy, p.vz);
   const over = Math.max(0, sim.tLand - 7) + Math.max(0, 1.5 - sim.tLand) + Math.max(0, (speed - 85) / 10);
-  return 1e4 * over * over;
+  // The ball's apparent size says how far the tee is; let the fitted pitch disagree by a
+  // modest factor only, which keeps speed and distance from trading off against each other.
+  const f = focalPx(w, h, opts.equivMm ?? 24);
+  const distBall = Math.max(1, (f * BALL_RADIUS_M) / Math.max(1, ball.r));
+  const teeDist = Math.hypot(tee.x, tee.z);
+  const off = Math.log(teeDist / distBall) / 0.3;
+  return 1e4 * over * over + 2000 * off * off;
 }
 
 function residuals(w, h, ball, p, obs, opts) {

@@ -1,8 +1,8 @@
-import { toGray, analyze, snapToBall, estimateBallRadius } from './tracker.js?v=9';
-import { defaultTrace, smoothTrace, handles, moveHandle } from './curve.js?v=9';
-import { fitFlight, flightAt } from './flight.js?v=9';
-import { drawTrace, drawHandles, drawTrackedPoints, drawBallMarker, drawCarryLabel } from './render.js?v=9';
-import { recordClip, seek } from './export.js?v=9';
+import { toGray, analyze, snapToBall, estimateBallRadius } from './tracker.js?v=10';
+import { defaultTrace, smoothTrace, handles, moveHandle } from './curve.js?v=10';
+import { fitFlight, flightAt } from './flight.js?v=10';
+import { drawTrace, drawHandles, drawTrackedPoints, drawBallMarker, drawCarryLabel } from './render.js?v=10';
+import { recordClip, seek } from './export.js?v=10';
 
 const $ = (id) => document.getElementById(id);
 const video = $('video');
@@ -241,12 +241,21 @@ async function startAnalysis() {
       const fit = fitFlight(canvas.width, canvas.height, state.ball, obs, { fps: FPS });
       if (fit) {
         flight = { ...fit, at: flightAt(fit) };
-        state.stats = { carryYd: fit.carry * 1.0936, hang: fit.tLand, speedMph: fit.speed * 2.237, launch: fit.launchAngle };
+        state.stats = { carryYd: fit.carry * 1.0936, hang: fit.tLand, speedMph: fit.speed * 2.237, launch: fit.launchAngle, rms: fit.rms };
       }
     } catch (err) { console.warn('flight fit failed', err); }
     t = smoothTrace(state.ball, state.points, result.impactIndex, FPS, canvas.width, canvas.height, flight);
-    if (t && state.stats) $('adjust-msg').textContent += ` Carry estimate ≈ ${Math.round(state.stats.carryYd)} yd (rough: single phone camera, no calibration).`;
+    if (t && state.stats) {
+      const st = state.stats;
+      $('adjust-msg').textContent += ` Carry estimate ≈ ${Math.round(st.carryYd)} yd (rough: ${Math.round(st.speedMph)} mph, ${Math.round(st.launch)}° launch, ${st.hang.toFixed(1)} s hang).`;
+    }
   }
+  state.debug = {
+    version: document.querySelector('.ver')?.textContent, w: canvas.width, h: canvas.height, fps: FPS,
+    ball: state.ball, impactIndex: result.impactIndex, points: state.points.map((p) => [Math.round(p.x * 10) / 10, Math.round(p.y * 10) / 10, p.i]),
+    stats: state.stats,
+  };
+  $('copy-debug').classList.remove('hidden');
   if (!t) t = defaultTrace(state.ball, state.points, result.impactIndex, canvas.width, canvas.height);
   state.trace = t.pts;
   if (t.hangFrames > 0) {
@@ -383,6 +392,17 @@ $('share').addEventListener('click', async () => {
   catch (err) { if (err && err.name !== 'AbortError') $('export-msg').textContent = `Share failed: ${err.message}`; }
 });
 $('back-to-adjust').addEventListener('click', () => setStep('adjust'));
+
+// Lets Al paste the tracked points into the chat so a bad result can be reproduced.
+$('copy-debug').addEventListener('click', async () => {
+  const text = JSON.stringify(state.debug);
+  try {
+    await navigator.clipboard.writeText(text);
+    $('copy-debug').textContent = 'Copied, paste it in the chat';
+  } catch {
+    window.prompt('Copy this text:', text);
+  }
+});
 
 // ---------- drawing ----------
 function draw(clean = false) {

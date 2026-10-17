@@ -8,11 +8,11 @@
   <meta name="theme-color" content="#0b1a0f" />
   <title>Golf Tracer</title>
   <link rel="manifest" href="manifest.webmanifest" />
-  <link rel="stylesheet" href="src/styles.css?v=9" />
+  <link rel="stylesheet" href="src/styles.css?v=10" />
 </head>
 <body>
   <header>
-    <h1>Golf Tracer <span class="ver">v0.9</span></h1>
+    <h1>Golf Tracer <span class="ver">v0.10</span></h1>
     <ol id="steps" class="steps">
       <li data-step="load">Clip</li>
       <li data-step="tap">Ball</li>
@@ -53,6 +53,7 @@
 
     <section id="panel-adjust" class="panel hidden">
       <p id="adjust-msg">Drag the handles to match the shot: start, apex and landing.</p>
+      <p class="hint"><button id="copy-debug" class="link hidden">Copy tracking data</button></p>
       <div class="controls">
         <label>Color <input id="color" type="color" value="#ff3b30" /></label>
         <label>Width <input id="width" type="range" min="2" max="14" step="1" value="6" /></label>
@@ -81,6 +82,6 @@
     <button id="restart" class="link hidden">Start over</button>
   </footer>
 
-  <script type="module" src="src/app.js?v=9"></script>
+  <script type="module" src="src/app.js?v=10"></script>
 </body>
 </html>
