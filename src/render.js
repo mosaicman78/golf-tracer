@@ -1,4 +1,4 @@
-import { visiblePoints, handles } from './curve.js?v=5';
+import { visiblePoints, handles } from './curve.js?v=6';
 
 // Draw the tracer up to `progress` (0..1 of the hang time) with a soft glow and a bright core.
 export function drawTrace(ctx, trace, progress, style) {

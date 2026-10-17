@@ -1,8 +1,8 @@
-import { toGray, analyze, snapToBall, estimateBallRadius } from './tracker.js?v=5';
-import { defaultTrace, smoothTrace, handles, moveHandle } from './curve.js?v=5';
-import { fitFlight, flightAt } from './flight.js?v=5';
-import { drawTrace, drawHandles, drawTrackedPoints, drawBallMarker, drawCarryLabel } from './render.js?v=5';
-import { recordClip, seek } from './export.js?v=5';
+import { toGray, analyze, snapToBall, estimateBallRadius } from './tracker.js?v=6';
+import { defaultTrace, smoothTrace, handles, moveHandle } from './curve.js?v=6';
+import { fitFlight, flightAt } from './flight.js?v=6';
+import { drawTrace, drawHandles, drawTrackedPoints, drawBallMarker, drawCarryLabel } from './render.js?v=6';
+import { recordClip, seek } from './export.js?v=6';
 
 const $ = (id) => document.getElementById(id);
 const video = $('video');
@@ -244,6 +244,7 @@ async function startAnalysis() {
     $('hang-label').textContent = `${state.hang.toFixed(1)} s`;
   }
   await seek(video, state.impactTime + Math.min(state.hang, 1.2));
+  overlay('');
   setStep('adjust');
 }
 
