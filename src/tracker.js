@@ -181,13 +181,81 @@ export function sameFrame(a, b) {
   return true;
 }
 
+// Pick the most ball-like chain of candidates over the first frames after impact.
+// `cands` is a list per frame of blobs { x, y, score, iso, i }. A ball chain moves
+// smoothly, rises overall, and consists of bright isolated dots; wind-blown grass and
+// tree edges flicker in place, and the club and golfer fail the blob filters.
+export function findChain(cands, ball, h) {
+  const nodes = [];
+  for (const list of cands) for (const b of list) nodes.push({ ...b, len: 1, cost: 0, prev: null, vx: null, vy: null });
+  nodes.sort((a, b) => a.i - b.i);
+  const maxStep = h * 0.3;
+  for (let k = 0; k < nodes.length; k++) {
+    const c = nodes[k];
+    let best = null;
+    for (let j = 0; j < k; j++) {
+      const p = nodes[j];
+      const gap = c.i - p.i;
+      if (gap <= 0) continue;
+      if (gap > 3) continue;
+      const dx = (c.x - p.x) / gap, dy = (c.y - p.y) / gap;
+      const step = Math.hypot(dx, dy);
+      if (step > maxStep) continue;
+      let cost;
+      if (p.vx == null) {
+        // first link: the chain must keep heading the way the ball left the tee
+        if (dy > ball.r) continue;
+        const ux = p.x - ball.x, uy = p.y - ball.y;
+        const cos = (ux * dx + uy * dy) / (Math.hypot(ux, uy) * step + 1e-6);
+        if (cos < 0.35) continue;
+        cost = 0.2;
+      } else {
+        const pv = Math.hypot(p.vx, p.vy);
+        const dev = Math.hypot(dx - p.vx, dy - p.vy);
+        cost = dev / (pv + ball.r * 3);
+        if (cost > 1.2) continue;
+      }
+      const total = p.len * 1.0 + p.score * 0.5 - p.cost;
+      const cand = { total, p, cost, dx, dy };
+      if (!best || cand.total - cand.cost > best.total - best.cost) best = cand;
+    }
+    if (best) {
+      c.prev = best.p;
+      c.len = best.p.len + 1;
+      c.cost = best.p.cost + best.cost;
+      c.vx = best.dx; c.vy = best.dy;
+    }
+  }
+  // A lone dot in clear sky (iso near 0) is worth a full point; something moving next to
+  // other motion (club, hands, blowing grass) is worth little.
+  const weight = (n) => Math.max(0.1, Math.min(1, 1 - n.iso / 8));
+  let bestEnd = null, bestVal = -Infinity;
+  for (const n of nodes) {
+    if (n.len < 4) continue;
+    let s = n; while (s.prev) s = s.prev;
+    if (s.y - n.y < ball.r * 2) continue; // must rise overall
+    // the chain must start in the upward cone from the tee (a ball never leaves sideways
+    // when filmed from behind)
+    if (ball.y - s.y < Math.abs(s.x - ball.x)) continue;
+    let sum = 0, m = n; while (m) { sum += weight(m) + m.score * 0.5; m = m.prev; }
+    const val = sum - n.cost;
+    if (val > bestVal) { bestVal = val; bestEnd = n; }
+  }
+  if (!bestEnd) return null;
+  const chain = [];
+  for (let m = bestEnd; m; m = m.prev) chain.unshift(m);
+  // drop a weak start (the club or the glove swinging up before the real ball shows)
+  while (chain.length > 4 && weight(chain[0]) < 0.4) chain.shift();
+  return chain.map((m) => ({ x: m.x, y: m.y, i: m.i }));
+}
+
 // Drives the whole analysis over a sequence of frames.
 // getFrame(i) -> Promise<gray frame>, i counted from the address frame (0).
 // ball: { x, y, r } in frame pixels.
 // Returns { impactIndex, points: [{ x, y, i }] }: ball centres after impact.
 export async function analyze(getFrame, ball, opts = {}) {
   const maxFrames = opts.maxFrames ?? 150;
-  const findFrames = opts.findFrames ?? 10;  // frames after impact to look for the ball anywhere above
+  const findFrames = opts.findFrames ?? 14;  // frames after impact to look for the ball anywhere above
   const maxMisses = opts.maxMisses ?? 4;
   const onProgress = opts.onProgress ?? (() => {});
 
@@ -196,6 +264,7 @@ export async function analyze(getFrame, ball, opts = {}) {
   let prev = address;
   let impactIndex = -1;
   const points = [];
+  const cands = [];
   let misses = 0;
   let vx = 0, vy = 0;
 
@@ -217,15 +286,21 @@ export async function analyze(getFrame, ball, opts = {}) {
     const maxArea = Math.PI * ball.r * ball.r * 4;
     let hit = null;
     if (!points.length) {
-      // The ball leaves the frame bottom fast at 30 fps; look for a lone bright dot anywhere above it.
-      if (i - impactIndex > findFrames) break;
+      // The ball leaves the tee fast at 30 fps and there is a lot of other motion (club,
+      // golfer, grass in the wind). Collect candidate dots anywhere above the ball for a
+      // few frames, then pick the chain of them that moves like a ball.
       const win = { x0: 0, x1: curr.w - 1, y0: 0, y1: ball.y - ball.r * 2 };
       const blobs = findBlobs(curr, prev, win, { maxArea, px: ball.x, py: ball.y, pr: curr.h, thresh: opts.thresh });
-      hit = blobs[0] || null;
-      if (hit) {
-        const dt = i - impactIndex;
-        vx = (hit.x - ball.x) / dt; vy = (hit.y - ball.y) / dt;
+      cands.push(blobs.slice(0, 40).map((b) => ({ ...b, i })));
+      if (i - impactIndex >= findFrames) {
+        const chain = findChain(cands, ball, curr.h);
+        if (!chain) break;
+        points.push(...chain);
+        const a = chain[chain.length - 2], b = chain[chain.length - 1];
+        vx = (b.x - a.x) / (b.i - a.i); vy = (b.y - a.y) / (b.i - a.i);
       }
+      prev = curr;
+      continue;
     } else {
       const last = points[points.length - 1];
       const dt = i - last.i;

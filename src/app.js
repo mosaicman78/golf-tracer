@@ -1,7 +1,7 @@
-import { toGray, analyze, snapToBall, estimateBallRadius } from './tracker.js?v=3';
-import { defaultTrace, handles, moveHandle } from './curve.js?v=3';
-import { drawTrace, drawHandles, drawTrackedPoints, drawBallMarker } from './render.js?v=3';
-import { recordClip, seek } from './export.js?v=3';
+import { toGray, analyze, snapToBall, estimateBallRadius } from './tracker.js?v=4';
+import { defaultTrace, handles, moveHandle } from './curve.js?v=4';
+import { drawTrace, drawHandles, drawTrackedPoints, drawBallMarker } from './render.js?v=4';
+import { recordClip, seek } from './export.js?v=4';
 
 const $ = (id) => document.getElementById(id);
 const video = $('video');
