@@ -1,7 +1,7 @@
-import { toGray, analyze, snapToBall, estimateBallRadius } from './tracker.js';
-import { defaultTrace, handles, moveHandle } from './curve.js';
-import { drawTrace, drawHandles, drawTrackedPoints, drawBallMarker } from './render.js';
-import { recordClip, seek } from './export.js';
+import { toGray, analyze, snapToBall, estimateBallRadius } from './tracker.js?v=3';
+import { defaultTrace, handles, moveHandle } from './curve.js?v=3';
+import { drawTrace, drawHandles, drawTrackedPoints, drawBallMarker } from './render.js?v=3';
+import { recordClip, seek } from './export.js?v=3';
 
 const $ = (id) => document.getElementById(id);
 const video = $('video');
@@ -24,6 +24,7 @@ const state = {
   hang: 5,             // seconds the tracer takes to complete
   drag: null,
   previewing: false,
+  framesDrawn: 0,      // frames painted since the clip was loaded (0 = still black)
 };
 window.__tracer = state; // handy for debugging and tests
 
@@ -53,16 +54,22 @@ function overlay(msg) {
 $('file').addEventListener('change', async (e) => {
   const file = e.target.files && e.target.files[0];
   if (!file) return;
-  await loadFile(file);
+  try { await loadFile(file); } catch (err) { overlay(`Error: ${err.message}`); }
 });
+
+// Surface failures on screen: the user is on a phone with no console.
+window.addEventListener('error', (e) => overlay(`Error: ${e.message}`));
+window.addEventListener('unhandledrejection', (e) => overlay(`Error: ${e.reason && e.reason.message || e.reason}`));
 
 async function loadFile(file) {
   if (state.url) URL.revokeObjectURL(state.url);
   state.url = URL.createObjectURL(file);
+  $('stage').classList.remove('hidden');
+  overlay(`Opening ${file.name || 'clip'} (${(file.size / 1e6).toFixed(0)} MB, ${file.type || 'unknown type'})…`);
   video.src = state.url;
   await new Promise((resolve, reject) => {
     video.onloadedmetadata = resolve;
-    video.onerror = () => reject(new Error('Could not open that video.'));
+    video.onerror = () => reject(new Error(`Could not open that video (${video.error && video.error.message || 'decode error'}).`));
   });
   const k = Math.min(1, OUT_MAX / Math.max(video.videoWidth, video.videoHeight));
   canvas.width = Math.round(video.videoWidth * k);
@@ -71,11 +78,24 @@ async function loadFile(file) {
   $('scrubber').value = 0;
   state.ball = null; state.points = []; state.trace = null; state.impactTime = null;
   setStep('tap');
-  overlay('Loading first frame…');
+  overlay(`Loading first frame… (${video.videoWidth}×${video.videoHeight}, ${video.duration.toFixed(1)} s)`);
   await primeVideo();
-  overlay('Tap the ball');
+  state.framesDrawn = 0;
   draw();
+  if (!state.framesDrawn) overlay(`Waiting for video data (readyState ${video.readyState})…`);
+  else overlay('Tap the ball');
 }
+
+// Keep painting while a clip is loaded; some browsers only deliver the first frame late.
+function drawLoop() {
+  if (state.step === 'tap' || (state.step === 'adjust' && !state.previewing)) {
+    const before = state.framesDrawn;
+    draw();
+    if (!before && state.framesDrawn && state.step === 'tap') overlay('Tap the ball');
+  }
+  requestAnimationFrame(drawLoop);
+}
+requestAnimationFrame(drawLoop);
 
 // iOS Safari won't hand a frame to drawImage until the video has actually started once,
 // so nudge it with a muted play/pause and a tiny seek, then wait for data to be ready.
@@ -290,8 +310,9 @@ $('back-to-adjust').addEventListener('click', () => setStep('adjust'));
 
 // ---------- drawing ----------
 function draw(clean = false) {
-  if (state.step === 'load' || !video.videoWidth) return;
+  if (state.step === 'load' || !video.videoWidth || video.readyState < 2) return;
   ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+  state.framesDrawn = (state.framesDrawn || 0) + 1;
   const scale = cssScale() || 1;
   if (state.step === 'tap' && state.ball) drawBallMarker(ctx, state.ball, scale);
   if (state.trace && state.impactTime != null) {
