@@ -70,9 +70,26 @@ async function loadFile(file) {
   $('scrubber').max = video.duration;
   $('scrubber').value = 0;
   state.ball = null; state.points = []; state.trace = null; state.impactTime = null;
-  await seek(video, 0);
   setStep('tap');
+  overlay('Loading first frame…');
+  await primeVideo();
   overlay('Tap the ball');
+  draw();
+}
+
+// iOS Safari won't hand a frame to drawImage until the video has actually started once,
+// so nudge it with a muted play/pause and a tiny seek, then wait for data to be ready.
+async function primeVideo() {
+  try { await video.play(); video.pause(); } catch { /* autoplay refused; the seek below still helps */ }
+  await seek(video, 0.001);
+  if (video.readyState < 2) {
+    await new Promise((resolve) => {
+      const done = () => { video.removeEventListener('loadeddata', done); video.removeEventListener('canplay', done); resolve(); };
+      video.addEventListener('loadeddata', done);
+      video.addEventListener('canplay', done);
+      setTimeout(done, 2000);
+    });
+  }
 }
 
 // ---------- scrubbing ----------
@@ -290,4 +307,6 @@ function draw(clean = false) {
 // keep the canvas fresh while the video is seeking/paused
 video.addEventListener('seeked', () => draw());
 video.addEventListener('loadeddata', () => draw());
+video.addEventListener('canplay', () => draw());
+video.addEventListener('timeupdate', () => { if (!state.previewing) draw(); });
 window.addEventListener('resize', () => draw());

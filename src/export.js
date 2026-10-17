@@ -73,9 +73,12 @@ async function recordOnce(mimeType, { canvas, video, from, to, fps = 30, onProgr
 
 export function seek(video, t) {
   return new Promise((resolve) => {
-    if (Math.abs(video.currentTime - t) < 1e-4) { resolve(); return; }
-    const onSeeked = () => { video.removeEventListener('seeked', onSeeked); resolve(); };
+    if (Math.abs(video.currentTime - t) < 1e-4 && video.readyState >= 2) { resolve(); return; }
+    let timer;
+    const onSeeked = () => { clearTimeout(timer); video.removeEventListener('seeked', onSeeked); resolve(); };
     video.addEventListener('seeked', onSeeked);
+    // Safari occasionally never fires `seeked` for a no-op seek; don't hang on it
+    timer = setTimeout(onSeeked, 1500);
     video.currentTime = t;
   });
 }
