@@ -73,6 +73,11 @@ try {
     return Array.from(new Uint8Array(await r.arrayBuffer()));
   });
   writeFileSync(`${outDir}/export.webm`, Buffer.from(buf));
+  // the export must carry the clip's sound when the clip has any
+  const streams = (sp) => new Promise((r) => { const c = spawn('ffprobe', ['-v', 'error', '-show_entries', 'stream=codec_type', '-of', 'csv=p=0', sp]); let o = ''; c.stdout.on('data', (d) => (o += d)); c.on('close', () => r(o.trim().split('\n').filter(Boolean))); });
+  const inStreams = await streams(clip), outStreams = await streams(`${outDir}/export.webm`);
+  console.log('streams in', inStreams, 'out', outStreams);
+  if (inStreams.includes('audio') && !outStreams.includes('audio')) { console.log('export lost the audio track'); process.exitCode = 1; }
   await page.screenshot({ path: `${outDir}/export.png` });
   if (errors.length) { console.log('page errors:', errors); process.exitCode = 1; }
   if (!(result.points >= 3 && size > 0)) process.exitCode = 1;

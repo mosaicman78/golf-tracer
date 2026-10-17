@@ -13,8 +13,9 @@ export function supportedMimeTypes() {
   return CANDIDATES.filter((m) => MediaRecorder.isTypeSupported(m));
 }
 
-// opts: { canvas, video, from, to, fps, onProgress, draw }
+// opts: { canvas, video, from, to, fps, onProgress, draw, audioTrack }
 // `draw` is called every animation frame to paint the current video frame plus the trace.
+// `audioTrack` (optional) is a MediaStreamTrack carrying the clip's sound; it is muxed in.
 // Tries each supported container in turn, since some browsers accept a type and then
 // record nothing with it.
 export async function recordClip(opts) {
@@ -34,9 +35,10 @@ export async function recordClip(opts) {
   throw lastErr || new Error('Recording produced an empty file.');
 }
 
-async function recordOnce(mimeType, { canvas, video, from, to, fps = 30, onProgress = () => {}, draw }) {
+async function recordOnce(mimeType, { canvas, video, from, to, fps = 30, onProgress = () => {}, draw, audioTrack = null }) {
   const stream = canvas.captureStream(fps);
-  const rec = new MediaRecorder(stream, { mimeType, videoBitsPerSecond: 12_000_000 });
+  if (audioTrack) stream.addTrack(audioTrack);
+  const rec = new MediaRecorder(stream, { mimeType, videoBitsPerSecond: 12_000_000, audioBitsPerSecond: 128_000 });
   const chunks = [];
   rec.ondataavailable = (e) => { if (e.data && e.data.size) chunks.push(e.data); };
   const done = new Promise((resolve, reject) => {
@@ -67,7 +69,7 @@ async function recordOnce(mimeType, { canvas, video, from, to, fps = 30, onProgr
   await new Promise((r) => setTimeout(r, 300));
   rec.stop();
   await done;
-  stream.getTracks().forEach((t) => t.stop());
+  stream.getVideoTracks().forEach((t) => t.stop());
   return new Blob(chunks, { type: mimeType.split(';')[0] });
 }
 

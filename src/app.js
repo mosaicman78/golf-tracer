@@ -1,8 +1,8 @@
-import { toGray, analyze, snapToBall, estimateBallRadius } from './tracker.js?v=6';
-import { defaultTrace, smoothTrace, handles, moveHandle } from './curve.js?v=6';
-import { fitFlight, flightAt } from './flight.js?v=6';
-import { drawTrace, drawHandles, drawTrackedPoints, drawBallMarker, drawCarryLabel } from './render.js?v=6';
-import { recordClip, seek } from './export.js?v=6';
+import { toGray, analyze, snapToBall, estimateBallRadius } from './tracker.js?v=7';
+import { defaultTrace, smoothTrace, handles, moveHandle } from './curve.js?v=7';
+import { fitFlight, flightAt } from './flight.js?v=7';
+import { drawTrace, drawHandles, drawTrackedPoints, drawBallMarker, drawCarryLabel } from './render.js?v=7';
+import { recordClip, seek } from './export.js?v=7';
 
 const $ = (id) => document.getElementById(id);
 const video = $('video');
@@ -300,32 +300,76 @@ video.addEventListener('pause', () => { state.previewing = false; $('play').text
 
 // ---------- export ----------
 let lastBlob = null;
+let audio = null; // { ctx, dest } once the clip's sound has been routed through Web Audio
+
+// Route the <video>'s sound into a MediaStream so the recorder can mux it. Must be created
+// (and resumed) inside a user gesture for iOS Safari. After this the element's audio only
+// reaches the recorder, which is fine: previews stay silent as before.
+function audioTrackForExport() {
+  try {
+    if (!audio) {
+      const Ctx = window.AudioContext || window.webkitAudioContext;
+      if (!Ctx) return null;
+      const ctx = new Ctx();
+      const src = ctx.createMediaElementSource(video);
+      const dest = ctx.createMediaStreamDestination();
+      src.connect(dest);
+      audio = { ctx, dest };
+    }
+    if (audio.ctx.state !== 'running') audio.ctx.resume();
+    return audio.dest.stream.getAudioTracks()[0] || null;
+  } catch (err) {
+    console.warn('audio capture unavailable', err);
+    return null;
+  }
+}
+
 $('export').addEventListener('click', async () => {
+  // Everything that needs the user gesture happens before the first await.
+  const audioTrack = audioTrackForExport();
+  video.muted = false;           // a muted element feeds silence into the audio graph
+  video.volume = 1;
+  const unlock = video.play().then(() => video.pause(), () => { /* fall back to silent below */ });
   setStep('export');
   $('download').classList.add('hidden');
   $('share').classList.add('hidden');
+  $('share-hint').classList.add('hidden');
   $('export-msg').textContent = 'Rendering… keep this screen open.';
   const { from, to } = previewRange();
   try {
+    await unlock;
     const { blob, ext } = await recordClip({
       canvas, video, from, to, fps: FPS,
       onProgress: (p) => { $('export-progress').value = p; },
       draw: () => draw(true),
+      audioTrack,
     });
     lastBlob = new File([blob], `golf-tracer.${ext}`, { type: blob.type });
-    $('export-msg').textContent = `Done (${(blob.size / 1e6).toFixed(1)} MB).`;
+    $('export-msg').textContent = `Done (${(blob.size / 1e6).toFixed(1)} MB${audioTrack ? ', with sound' : ', no sound'}).`;
     const a = $('download');
     a.href = URL.createObjectURL(blob);
     a.download = lastBlob.name;
     a.classList.remove('hidden');
-    if (navigator.canShare && navigator.canShare({ files: [lastBlob] })) $('share').classList.remove('hidden');
+    const canShare = !!(navigator.canShare && navigator.canShare({ files: [lastBlob] }));
+    if (canShare) {
+      $('share').classList.remove('hidden');
+      $('share-hint').classList.remove('hidden');
+      $('download').classList.remove('primary');
+    } else {
+      $('download').classList.add('primary');
+      $('download').textContent = 'Save video';
+    }
   } catch (err) {
     $('export-msg').textContent = `Export failed: ${err.message}`;
+  } finally {
+    video.muted = true;
   }
   draw();
 });
 $('share').addEventListener('click', async () => {
-  try { await navigator.share({ files: [lastBlob], title: 'Golf shot' }); } catch { /* user cancelled */ }
+  // On iPhone the share sheet offers "Save Video", which puts the clip in Photos.
+  try { await navigator.share({ files: [lastBlob], title: 'Golf shot' }); }
+  catch (err) { if (err && err.name !== 'AbortError') $('export-msg').textContent = `Share failed: ${err.message}`; }
 });
 $('back-to-adjust').addEventListener('click', () => setStep('adjust'));
 

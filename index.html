@@ -8,11 +8,11 @@
   <meta name="theme-color" content="#0b1a0f" />
   <title>Golf Tracer</title>
   <link rel="manifest" href="manifest.webmanifest" />
-  <link rel="stylesheet" href="src/styles.css?v=6" />
+  <link rel="stylesheet" href="src/styles.css?v=7" />
 </head>
 <body>
   <header>
-    <h1>Golf Tracer <span class="ver">v0.6</span></h1>
+    <h1>Golf Tracer <span class="ver">v0.7</span></h1>
     <ol id="steps" class="steps">
       <li data-step="load">Clip</li>
       <li data-step="tap">Ball</li>
@@ -69,10 +69,11 @@
       <p id="export-msg">Rendering…</p>
       <progress id="export-progress" max="1" value="0"></progress>
       <div class="row">
-        <a id="download" class="button hidden" download="golf-tracer.mp4">Save video</a>
-        <button id="share" class="button primary hidden">Share</button>
+        <button id="share" class="button primary hidden">Save to Photos…</button>
+        <a id="download" class="button hidden" download="golf-tracer.mp4">Save to Files</a>
         <button id="back-to-adjust" class="button ghost">Back</button>
       </div>
+      <p id="share-hint" class="hint hidden">Save to Photos opens the share sheet; pick <b>Save Video</b> there.</p>
     </section>
   </main>
 
@@ -80,6 +81,6 @@
     <button id="restart" class="link hidden">Start over</button>
   </footer>
 
-  <script type="module" src="src/app.js?v=6"></script>
+  <script type="module" src="src/app.js?v=7"></script>
 </body>
 </html>
