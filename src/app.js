@@ -1,8 +1,8 @@
-import { toGray, analyze, snapToBall, estimateBallRadius } from './tracker.js?v=10';
-import { defaultTrace, smoothTrace, handles, moveHandle } from './curve.js?v=10';
-import { fitFlight, flightAt } from './flight.js?v=10';
-import { drawTrace, drawHandles, drawTrackedPoints, drawBallMarker, drawCarryLabel } from './render.js?v=10';
-import { recordClip, seek } from './export.js?v=10';
+import { toGray, analyze, snapToBall, estimateBallRadius } from './tracker.js?v=11';
+import { defaultTrace, smoothTrace, handles, moveHandle, positionAt } from './curve.js?v=11';
+import { fitFlight, flightAt } from './flight.js?v=11';
+import { drawTrace, drawHandles, drawTrackedPoints, drawBallMarker, drawCarryLabel } from './render.js?v=11';
+import { recordClip, seek } from './export.js?v=11';
 
 const $ = (id) => document.getElementById(id);
 const video = $('video');
@@ -165,6 +165,7 @@ canvas.addEventListener('pointermove', (ev) => {
   const p = toVideoCoords(ev);
   state.trace = moveHandle(state.trace, state.drag.key, p.x - state.drag.last.x, p.y - state.drag.last.y);
   state.drag.last = p;
+  state.drag.moved = true;
   draw();
 });
 // The page scrolls over the video (touch-action: pan-y) except when a finger lands on a handle,
@@ -178,12 +179,16 @@ function nearHandle(touch) {
 }
 canvas.addEventListener('touchstart', (ev) => { if (ev.touches.length === 1 && nearHandle(ev.touches[0])) ev.preventDefault(); }, { passive: false });
 canvas.addEventListener('touchmove', (ev) => { if (state.drag) ev.preventDefault(); }, { passive: false });
-const endDrag = () => { state.drag = null; };
+const endDrag = () => {
+  if (state.drag && state.drag.moved) { state.edited = true; scheduleRefit(); }
+  state.drag = null;
+};
 canvas.addEventListener('pointerup', endDrag);
 canvas.addEventListener('pointercancel', endDrag);
 
 // ---------- analysis ----------
 async function startAnalysis() {
+  state.edited = false;
   setStep('analyze');
   overlay('');
   // Analysis frames are drawn straight from the video (not the display canvas) so a 4K clip
@@ -219,6 +224,8 @@ async function startAnalysis() {
   });
 
   state.points = result.points.map((p) => ({ x: p.x / scale, y: p.y / scale, i: p.i }));
+  // the phone drifts while the golfer sets up; launch from where the ball was at impact
+  if (result.ball) state.ball = { x: result.ball.x / scale, y: result.ball.y / scale, r: result.ball.r / scale };
   if (result.impactIndex < 0) {
     state.impactTime = state.addressTime + 0.5;
     $('adjust-msg').textContent = "Couldn't see the ball leave. Set the handles by hand, or re-tap on a frame just before the swing.";
@@ -226,7 +233,7 @@ async function startAnalysis() {
     state.impactTime = state.addressTime + result.impactIndex / FPS;
     $('adjust-msg').textContent = state.points.length >= 3
       ? `Tracked ${state.points.length} frames after impact. Drag the handles to fine-tune.`
-      : 'Found impact but lost the ball quickly. Drag the handles to match the shot.';
+      : "Found the strike but couldn't follow the ball in the air. Drag Apex and Landing to where the ball went; the carry updates as you do.";
   }
   // Fit the flight model and build a smooth curve that runs on to landing; fall back to
   // the plain polyline when there is too little to fit.
@@ -263,9 +270,35 @@ async function startAnalysis() {
     $('hang').value = state.hang.toFixed(1);
     $('hang-label').textContent = `${state.hang.toFixed(1)} s`;
   }
+  if (!state.stats && result.impactIndex >= 0) refitFromTrace();
   await seek(video, state.impactTime + Math.min(state.hang, 1.2));
   overlay('');
   setStep('adjust');
+}
+
+// Carry from the trace itself (as drawn, or as the user shaped it with the handles): fit the
+// flight model to points sampled along it, timed by the hang-time setting.
+function refitFromTrace() {
+  if (!state.trace || !state.ball) return;
+  const obs = [];
+  for (let k = 1; k <= 30; k++) {
+    const sNorm = k / 30;
+    const p = positionAt(state.trace, sNorm);
+    obs.push({ x: p.x, y: p.y, t: sNorm * state.hang });
+  }
+  try {
+    const fit = fitFlight(canvas.width, canvas.height, state.ball, obs, { fps: FPS });
+    state.stats = fit ? { carryYd: fit.carry * 1.0936, hang: fit.tLand, speedMph: fit.speed * 2.237, launch: fit.launchAngle, rms: fit.rms, fromTrace: true } : null;
+  } catch (err) {
+    console.warn('trace fit failed', err);
+    state.stats = null;
+  }
+  draw();
+}
+let refitTimer = null;
+function scheduleRefit() {
+  clearTimeout(refitTimer);
+  refitTimer = setTimeout(refitFromTrace, 250);
 }
 
 // ---------- adjust controls ----------
@@ -275,6 +308,7 @@ $('hang').addEventListener('input', (e) => {
   state.hang = parseFloat(e.target.value);
   $('hang-label').textContent = `${state.hang.toFixed(1)} s`;
   draw();
+  if (state.stats?.fromTrace || state.edited) scheduleRefit();
 });
 $('retap').addEventListener('click', async () => {
   state.points = []; state.trace = null;
@@ -405,6 +439,18 @@ $('copy-debug').addEventListener('click', async () => {
 });
 
 // ---------- drawing ----------
+// While the clip plays, the frame on screen can lag video.currentTime (a phone decoding 4K
+// drops frames), which made the trace run ahead of the ball. requestVideoFrameCallback says
+// which frame is actually being shown, so the trace keeps step with the picture.
+let presented = null;
+if ('requestVideoFrameCallback' in HTMLVideoElement.prototype) {
+  const onFrame = (_now, meta) => { presented = meta.mediaTime; video.requestVideoFrameCallback(onFrame); };
+  video.requestVideoFrameCallback(onFrame);
+}
+function shownTime() {
+  return !video.paused && presented != null && Math.abs(presented - video.currentTime) < 1 ? presented : video.currentTime;
+}
+
 function draw(clean = false) {
   if (state.step === 'load' || !video.videoWidth || video.readyState < 2) return;
   ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
@@ -412,7 +458,7 @@ function draw(clean = false) {
   const scale = cssScale() || 1;
   if (state.step === 'tap' && state.ball) drawBallMarker(ctx, state.ball, scale);
   if (state.trace && state.impactTime != null) {
-    const progress = Math.min(1, Math.max(0, (video.currentTime - state.impactTime) / state.hang));
+    const progress = Math.min(1, Math.max(0, (shownTime() - state.impactTime) / state.hang));
     drawTrace(ctx, state.trace, progress, state.style);
     if (state.stats && progress > 0) drawCarryLabel(ctx, state.stats, scale);
     if (!clean && state.step === 'adjust' && !state.previewing) {

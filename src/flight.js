@@ -153,7 +153,7 @@ function prior(w, h, ball, p, opts) {
   const f = focalPx(w, h, opts.equivMm ?? 24);
   const distBall = Math.max(1, (f * BALL_RADIUS_M) / Math.max(1, ball.r));
   const teeDist = Math.hypot(tee.x, tee.z);
-  const off = Math.log(teeDist / distBall) / 0.3;
+  const off = Math.log(teeDist / distBall) / 0.45;
   return 1e4 * over * over + 2000 * off * off;
 }
 

@@ -56,9 +56,25 @@ export function estimateBallRadius(gray, x, y) {
   const fallback = Math.max(3, Math.round(h / 150));
   const s = windowStats(gray, x, y, fallback * 4);
   if (s.maxV - s.mean < 30) return fallback;
-  const thresh = s.mean + (s.maxV - s.mean) * 0.5;
+  const thresh = s.mean + (s.maxV - s.mean) * 0.35;
+  // Count only the bright patch connected to the brightest pixel: sunlit grass around the
+  // ball can be nearly as bright, and counting every bright pixel in the window made the ball
+  // look twice its size.
+  const sx = Math.round(s.mx), sy = Math.round(s.my);
+  const seen = new Uint8Array((s.x1 - s.x0 + 1) * (s.y1 - s.y0 + 1));
+  const stack = [[sx, sy]];
   let area = 0;
-  for (let yy = s.y0; yy <= s.y1; yy++) for (let xx = s.x0; xx <= s.x1; xx++) if (data[yy * w + xx] >= thresh) area++;
+  const cap = Math.PI * (fallback * 3) ** 2;
+  while (stack.length && area < cap) {
+    const [px, py] = stack.pop();
+    if (px < s.x0 || px > s.x1 || py < s.y0 || py > s.y1) continue;
+    const k = (py - s.y0) * (s.x1 - s.x0 + 1) + (px - s.x0);
+    if (seen[k]) continue;
+    seen[k] = 1;
+    if (data[py * w + px] < thresh) continue;
+    area++;
+    stack.push([px + 1, py], [px - 1, py], [px, py + 1], [px, py - 1]);
+  }
   if (area < 3) return fallback;
   return Math.max(2, Math.min(fallback * 3, Math.sqrt(area / Math.PI)));
 }
@@ -75,7 +91,50 @@ export function ballPresent(gray, ball, ref) {
       if (Math.hypot(xx - ball.x, yy - ball.y) <= R && data[yy * w + xx] >= ref.thresh) n++;
     }
   }
-  return n >= ref.area * 0.3;
+  if (n < ref.area * 0.3) return false;
+  // On sunlit grass in 4K the ball is barely brighter than the turf around it, so bright
+  // pixels stay even after it has gone. Also require the spot to still stand out from its
+  // surroundings by a good part of the contrast it had at address.
+  if (ref.contrast == null || ref.contrast < 25) return true;
+  return ballContrast(gray, ball) >= ref.contrast * 0.4;
+}
+
+// Brightest ball-sized disc within a couple of pixels of the spot (camera shake), minus the
+// median of the ring around it (a median shrugs off the club shaft crossing the ring).
+export function ballContrast(gray, ball) {
+  return locateBall(gray, ball, 2).contrast;
+}
+
+// Best ball-sized bright disc within `shift` pixels of the spot: { x, y, contrast }.
+export function locateBall(gray, ball, shift = 3) {
+  const { w, h, data } = gray;
+  const r = Math.max(1.5, ball.r * 0.8);
+  let best = -Infinity, bx = ball.x, by = ball.y;
+  for (let dy = -shift; dy <= shift; dy++) {
+    for (let dx = -shift; dx <= shift; dx++) {
+      const cx = ball.x + dx, cy = ball.y + dy;
+      let sum = 0, n = 0;
+      for (let yy = Math.floor(cy - r); yy <= Math.ceil(cy + r); yy++) {
+        for (let xx = Math.floor(cx - r); xx <= Math.ceil(cx + r); xx++) {
+          if (xx < 0 || yy < 0 || xx >= w || yy >= h || Math.hypot(xx - cx, yy - cy) > r) continue;
+          sum += data[yy * w + xx]; n++;
+        }
+      }
+      if (n && sum / n > best) { best = sum / n; bx = cx; by = cy; }
+    }
+  }
+  const ring = [];
+  const R0 = ball.r * 2.2, R1 = ball.r * 3.5;
+  for (let yy = Math.floor(ball.y - R1); yy <= Math.ceil(ball.y + R1); yy++) {
+    for (let xx = Math.floor(ball.x - R1); xx <= Math.ceil(ball.x + R1); xx++) {
+      if (xx < 0 || yy < 0 || xx >= w || yy >= h) continue;
+      const d = Math.hypot(xx - ball.x, yy - ball.y);
+      if (d >= R0 && d <= R1) ring.push(data[yy * w + xx]);
+    }
+  }
+  if (!ring.length) return { x: bx, y: by, contrast: 0 };
+  ring.sort((a, b) => a - b);
+  return { x: bx, y: by, contrast: best - ring[ring.length >> 1] };
 }
 
 export function ballReference(gray, ball) {
@@ -96,7 +155,7 @@ export function ballReference(gray, ball) {
   for (let yy = s.y0; yy <= s.y1; yy++) for (let xx = s.x0; xx <= s.x1; xx++) {
     if (Math.hypot(xx - ball.x, yy - ball.y) <= ball.r * 1.6 && data[yy * w + xx] >= thresh) area++;
   }
-  return { thresh, area: Math.max(area, 3) };
+  return { thresh, area: Math.max(area, 3), contrast: ballContrast(gray, ball) };
 }
 
 // Find small, isolated blobs that got brighter between prev and curr inside a window.
@@ -246,6 +305,11 @@ export function findChain(cands, ball, h) {
   for (let m = bestEnd; m; m = m.prev) chain.unshift(m);
   // drop a weak start (the club or the glove swinging up before the real ball shows)
   while (chain.length > 4 && weight(chain[0]) < 0.4) chain.shift();
+  // A ball just off the club crosses the screen fast and upward. A chain that creeps along
+  // is tree-line or water flicker, and following it gives a nonsense trace.
+  const a = chain[0], z = chain[chain.length - 1];
+  const frames = Math.max(1, z.i - a.i);
+  if (a.y - z.y < ball.r * 2 || Math.hypot(z.x - a.x, z.y - a.y) / frames < ball.r * 0.8) return null;
   return chain.map((m) => ({ x: m.x, y: m.y, i: m.i }));
 }
 
@@ -253,7 +317,8 @@ export function findChain(cands, ball, h) {
 // getFrame(i) -> Promise<gray frame>, i counted from the address frame (0).
 // ball: { x, y, r } in frame pixels.
 // Returns { impactIndex, points: [{ x, y, i }] }: ball centres after impact.
-export async function analyze(getFrame, ball, opts = {}) {
+export async function analyze(getFrame, ball0, opts = {}) {
+  let ball = { ...ball0 };
   const maxFrames = opts.maxFrames ?? 150;
   const findFrames = opts.findFrames ?? 14;  // frames after impact to look for the ball anywhere above
   const maxMisses = opts.maxMisses ?? 4;
@@ -274,6 +339,13 @@ export async function analyze(getFrame, ball, opts = {}) {
     if (sameFrame(curr, prev)) continue; // duplicate frame: nothing moved, not a miss
 
     if (impactIndex < 0) {
+      // A hand-held phone drifts a few pixels a second; follow the ball while it sits there
+      // so the presence test keeps looking at the right spot.
+      // The club can sit over the ball in the address frame, so the reference contrast is the
+      // best seen while the ball sits there, not just frame 0's.
+      const loc = locateBall(curr, ball);
+      if (loc.contrast > ref.contrast && i < 90) ref.contrast = Math.min(loc.contrast, (ref.contrast || 0) * 3 + 30);
+      if (ref.contrast >= 25 && loc.contrast >= ref.contrast * 0.6) ball = { ...ball, x: loc.x, y: loc.y };
       if (!ballPresent(curr, ball, ref)) {
         const n1 = await getFrame(i + 1);
         const n2 = await getFrame(i + 2);
@@ -334,5 +406,5 @@ export async function analyze(getFrame, ball, opts = {}) {
     prev = curr;
   }
 
-  return { impactIndex, points };
+  return { impactIndex, points, ball };
 }
